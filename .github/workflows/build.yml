@@ -203,7 +203,9 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.job_name }}
-          path: build
+          path: |
+            build
+            rclone
 
   lint:
     if: ${{ github.repository == 'rclone/rclone' || github.event.inputs.manual }}
@@ -325,4 +327,6 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: "android-all"
-          path: build
+          path: |
+            build
+            rclone
