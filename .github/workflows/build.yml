@@ -176,13 +176,13 @@ jobs:
         shell: bash
         run: |
           make quicktest
-        if: matrix.quicktest
+        if: "matrix.quicktest && false"
 
       - name: Race test
         shell: bash
         run: |
           make racequicktest
-        if: matrix.racequicktest
+        if: "matrix.racequicktest && false"
 
       - name: Run librclone tests
         shell: bash
@@ -190,7 +190,7 @@ jobs:
           make -C librclone/ctest test
           make -C librclone/ctest clean
           librclone/python/test_rclone.py
-        if: matrix.librclonetest
+        if: "matrix.librclonetest && false"
 
       - name: Compile all architectures test
         shell: bash
