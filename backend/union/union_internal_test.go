@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rclone/rclone/backend/union/policy"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/object"
 	"github.com/rclone/rclone/fs/operations"
@@ -155,4 +156,33 @@ func TestMoveCopy(t *testing.T) {
 			assert.Equal(t, fileMemory.Size, obj.Size())
 		})
 	})
+}
+
+// This tests the policy resolver
+func TestPolicyResolve(t *testing.T) {
+	if *fstest.RemoteName != "" {
+		t.Skip("Skipping as -remote set")
+	}
+	ctx := context.Background()
+	f, err := fs.NewFs(ctx, ":union,upstreams=':memory: :memory:bucket',policy_override='mkdir:ff move:all':")
+	require.NoError(t, err)
+	unionfs, ok := f.(*Fs)
+	assert.True(t, ok)
+
+	test := func(op, expected string) {
+		expPolicy, err := policy.Get(expected)
+		require.NoError(t, err)
+		actPolicy, err := unionfs.resolvePolicy(op)
+		require.NoError(t, err)
+		assert.Equal(t, actPolicy, expPolicy)
+	}
+
+	// overridden
+	test("move", "all")
+	test("mkdir", "ff")
+
+	// by *_policy options
+	test("copyE", "epall")
+	test("newObject", "epmfs")
+	test("list", "ff")
 }

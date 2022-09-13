@@ -149,6 +149,31 @@ Policies basically search upstream remotes and create a list of files / paths fo
 
 If all remotes are filtered an error will be returned.
 
+### Overriding policy for specific operations
+
+For some cases, it is useful to perform operations on specific upstream, rather than do that for all of them.
+To make it possible, you can override policy for each operations.
+
+Overrides are specified by space-separated list. Each entries are in form of `operation:policy`.
+`Operation`s are described in the following table.
+
+| Operation | Category | Description |
+| move | Action | File move operation |
+| dirMove | Action | Directory move operation |
+| rmdir | Action | Directory remove operation |
+| remove | Action | File remove operation |
+| purge | Action | Purge operation |
+| setModTime | Action | Operation for setting modified time |
+| copyE | Action | Upload operation, when the destination exists |
+| newObject | Create | File create operation |
+| copyNE | Create | Upload operation, when the destination doesn't exist |
+| mkdir | Create | Directory create operation |
+| copyS | Search | Download operation |
+| list | Search | Listing operation |
+| listR | Search | Recursive listing operation |
+
+For `policy`, refer to the table in "Policy description" section below. In addition, you can also use `search`, `action` and `create` to reference the other default policies.
+
 ### Policy descriptions
 
 The policies definition are inspired by [trapexit/mergerfs](https://github.com/trapexit/mergerfs) but not exactly the same. Some policy definition could be different due to the much larger latency of remote file systems.

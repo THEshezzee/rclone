@@ -59,7 +59,7 @@ func (d *Directory) candidates() []upstream.Entry {
 // But for unknown-sized objects (indicated by src.Size() == -1), Upload should either
 // return an error or update the object properly (rather than e.g. calling panic).
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
-	entries, err := o.fs.actionEntries(o.candidates()...)
+	entries, err := o.fs.actionEntries("copyE", o.candidates()...)
 	if err == fs.ErrorPermissionDenied {
 		// There are no candidates in this object which can be written to
 		// So attempt to create a new object instead
@@ -100,7 +100,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 // Remove candidate objects selected by ACTION policy
 func (o *Object) Remove(ctx context.Context) error {
-	entries, err := o.fs.actionEntries(o.candidates()...)
+	entries, err := o.fs.actionEntries("remove", o.candidates()...)
 	if err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func (o *Object) Remove(ctx context.Context) error {
 
 // SetModTime sets the metadata on the object to set the modification date
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
-	entries, err := o.fs.actionEntries(o.candidates()...)
+	entries, err := o.fs.actionEntries("setModTime", o.candidates()...)
 	if err != nil {
 		return err
 	}

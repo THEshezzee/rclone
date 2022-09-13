@@ -51,6 +51,11 @@ func init() {
 			Help:    "Policy to choose upstream on SEARCH category.",
 			Default: "ff",
 		}, {
+			Name: "policy_override",
+			Help: `Space-separated list of overrides of policies for specific operations.
+
+Each entries are in form of "operation:policy", like "mkdir:ff "`,
+		}, {
 			Name:    "cache_time",
 			Help:    "Cache time of usage and free space (in seconds).\n\nThis option is only useful when a path preserving policy is used.",
 			Default: 120,
@@ -69,20 +74,44 @@ considered for use in lfs or eplfs policies.`,
 
 // Fs represents a union of upstreams
 type Fs struct {
-	name         string         // name of this remote
-	features     *fs.Features   // optional features
-	opt          common.Options // options for this Fs
-	root         string         // the path we are working on
-	upstreams    []*upstream.Fs // slice of upstreams
-	hashSet      hash.Set       // intersection of hash types
-	actionPolicy policy.Policy  // policy for ACTION
-	createPolicy policy.Policy  // policy for CREATE
-	searchPolicy policy.Policy  // policy for SEARCH
+	name           string                   // name of this remote
+	features       *fs.Features             // optional features
+	opt            common.Options           // options for this Fs
+	root           string                   // the path we are working on
+	upstreams      []*upstream.Fs           // slice of upstreams
+	hashSet        hash.Set                 // intersection of hash types
+	actionPolicy   policy.Policy            // policy for ACTION
+	createPolicy   policy.Policy            // policy for CREATE
+	searchPolicy   policy.Policy            // policy for SEARCH
+	overridePolicy map[string]policy.Policy // override
 }
 
+var (
+	atomPolicies    []string          = []string{"action", "create", "search"}
+	operationToAtom map[string]string = map[string]string{
+		"move":       "action",
+		"dirMove":    "action",
+		"rmdir":      "action",
+		"remove":     "action",
+		"purge":      "action",
+		"setModTime": "action",
+		"copyE":      "action", // copy, exists
+		"newObject":  "create",
+		"copyNE":     "create", // copy, not exist
+		"mkdir":      "create",
+		"copyS":      "search", // copy, source
+		"list":       "search",
+		"listR":      "search",
+
+		"action": "action",
+		"create": "create",
+		"search": "search",
+	}
+)
+
 // Wrap candidate objects in to a union Object
-func (f *Fs) wrapEntries(entries ...upstream.Entry) (entry, error) {
-	e, err := f.searchEntries(entries...)
+func (f *Fs) wrapEntries(operation string, entries ...upstream.Entry) (entry, error) {
+	e, err := f.searchEntries(operation, entries...)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +154,7 @@ func (f *Fs) Features() *fs.Features {
 
 // Rmdir removes the root directory of the Fs object
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
-	upstreams, err := f.action(ctx, dir)
+	upstreams, err := f.action(ctx, "rmdir", dir)
 	if err != nil {
 		return err
 	}
@@ -146,7 +175,7 @@ func (f *Fs) Hashes() hash.Set {
 
 // mkdir makes the directory passed in and returns the upstreams used
 func (f *Fs) mkdir(ctx context.Context, dir string) ([]*upstream.Fs, error) {
-	upstreams, err := f.create(ctx, dir)
+	upstreams, err := f.create(ctx, "mkdir", dir)
 	if err == fs.ErrorObjectNotFound {
 		parent := parentDir(dir)
 		if dir != parent {
@@ -172,7 +201,7 @@ func (f *Fs) mkdir(ctx context.Context, dir string) ([]*upstream.Fs, error) {
 	}
 	// If created roots then choose one
 	if dir == "" {
-		upstreams, err = f.create(ctx, dir)
+		upstreams, err = f.create(ctx, "mkdir", dir)
 	}
 	return upstreams, err
 }
@@ -195,7 +224,7 @@ func (f *Fs) Purge(ctx context.Context, dir string) error {
 			return fs.ErrorCantPurge
 		}
 	}
-	upstreams, err := f.action(ctx, "")
+	upstreams, err := f.action(ctx, "purge", "")
 	if err != nil {
 		return err
 	}
@@ -248,7 +277,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	if err != nil || co == nil {
 		return nil, err
 	}
-	wo, err := f.wrapEntries(du.WrapObject(co))
+	wo, err := f.wrapEntries("copyE", du.WrapObject(co))
 	return wo.(*Object), err
 }
 
@@ -267,7 +296,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		fs.Debugf(src, "Can't move - not same remote type")
 		return nil, fs.ErrorCantMove
 	}
-	entries, err := f.actionEntries(o.candidates()...)
+	entries, err := f.actionEntries("move", o.candidates()...)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +356,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 			en = append(en, o)
 		}
 	}
-	e, err := f.wrapEntries(en...)
+	e, err := f.wrapEntries("move", en...)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +377,7 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 		fs.Debugf(src, "Can't move directory - not same remote type")
 		return fs.ErrorCantDirMove
 	}
-	upstreams, err := sfs.action(ctx, srcRemote)
+	upstreams, err := sfs.action(ctx, "dirMove", srcRemote)
 	if err != nil {
 		return err
 	}
@@ -462,7 +491,7 @@ func multiReader(n int, in io.Reader) ([]io.Reader, <-chan error) {
 
 func (f *Fs) put(ctx context.Context, in io.Reader, src fs.ObjectInfo, stream bool, options ...fs.OpenOption) (fs.Object, error) {
 	srcPath := src.Remote()
-	upstreams, err := f.create(ctx, srcPath)
+	upstreams, err := f.create(ctx, "copyNE", srcPath)
 	if err == fs.ErrorObjectNotFound {
 		upstreams, err = f.mkdir(ctx, parentDir(srcPath))
 	}
@@ -481,7 +510,7 @@ func (f *Fs) put(ctx context.Context, in io.Reader, src fs.ObjectInfo, stream bo
 		if err != nil {
 			return nil, err
 		}
-		e, err := f.wrapEntries(u.WrapObject(o))
+		e, err := f.wrapEntries("copyE", u.WrapObject(o))
 		return e.(*Object), err
 	}
 	// Multi-threading
@@ -512,7 +541,7 @@ func (f *Fs) put(ctx context.Context, in io.Reader, src fs.ObjectInfo, stream bo
 	if err != nil {
 		return nil, err
 	}
-	e, err := f.wrapEntries(objs...)
+	e, err := f.wrapEntries("copyE", objs...)
 	return e.(*Object), err
 }
 
@@ -639,7 +668,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		}
 		return nil, errs.Err()
 	}
-	return f.mergeDirEntries(entriesList)
+	return f.mergeDirEntries("list", entriesList)
 }
 
 // ListR lists the objects and directories of the Fs starting
@@ -698,7 +727,7 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 		}
 		return errs.Err()
 	}
-	entries, err := f.mergeDirEntries(entriesList)
+	entries, err := f.mergeDirEntries("listR", entriesList)
 	if err != nil {
 		return err
 	}
@@ -727,7 +756,7 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	if len(entries) == 0 {
 		return nil, fs.ErrorObjectNotFound
 	}
-	e, err := f.wrapEntries(entries...)
+	e, err := f.wrapEntries("newObject", entries...)
 	if err != nil {
 		return nil, err
 	}
@@ -745,31 +774,76 @@ func (f *Fs) Precision() time.Duration {
 	return greatestPrecision
 }
 
-func (f *Fs) action(ctx context.Context, path string) ([]*upstream.Fs, error) {
-	return f.actionPolicy.Action(ctx, f.upstreams, path)
+func (f *Fs) resolvePolicy(action string) (policy.Policy, error) {
+	// action is one of operation, category, or policy
+	override, ok := f.overridePolicy[action]
+	if ok {
+		return override, nil
+	}
+	atom, ok := operationToAtom[action]
+	if !ok {
+		atom = action
+	}
+	switch atom {
+	case "action":
+		return f.actionPolicy, nil
+	case "create":
+		return f.createPolicy, nil
+	case "search":
+		return f.searchPolicy, nil
+	}
+	return policy.Get(atom)
 }
 
-func (f *Fs) actionEntries(entries ...upstream.Entry) ([]upstream.Entry, error) {
-	return f.actionPolicy.ActionEntries(entries...)
+func (f *Fs) action(ctx context.Context, operation, path string) ([]*upstream.Fs, error) {
+	p, err := f.resolvePolicy(operation)
+	if err != nil {
+		return nil, err
+	}
+	return p.Action(ctx, f.upstreams, path)
 }
 
-func (f *Fs) create(ctx context.Context, path string) ([]*upstream.Fs, error) {
-	return f.createPolicy.Create(ctx, f.upstreams, path)
+func (f *Fs) actionEntries(operation string, entries ...upstream.Entry) ([]upstream.Entry, error) {
+	p, err := f.resolvePolicy(operation)
+	if err != nil {
+		return nil, err
+	}
+	return p.ActionEntries(entries...)
 }
 
-func (f *Fs) createEntries(entries ...upstream.Entry) ([]upstream.Entry, error) {
-	return f.createPolicy.CreateEntries(entries...)
+func (f *Fs) create(ctx context.Context, operation, path string) ([]*upstream.Fs, error) {
+	p, err := f.resolvePolicy(operation)
+	if err != nil {
+		return nil, err
+	}
+	return p.Create(ctx, f.upstreams, path)
 }
 
-func (f *Fs) search(ctx context.Context, path string) (*upstream.Fs, error) {
-	return f.searchPolicy.Search(ctx, f.upstreams, path)
+func (f *Fs) createEntries(operation string, entries ...upstream.Entry) ([]upstream.Entry, error) {
+	p, err := f.resolvePolicy(operation)
+	if err != nil {
+		return nil, err
+	}
+	return p.CreateEntries(entries...)
 }
 
-func (f *Fs) searchEntries(entries ...upstream.Entry) (upstream.Entry, error) {
-	return f.searchPolicy.SearchEntries(entries...)
+func (f *Fs) search(ctx context.Context, operation, path string) (*upstream.Fs, error) {
+	p, err := f.resolvePolicy(operation)
+	if err != nil {
+		return nil, err
+	}
+	return p.Search(ctx, f.upstreams, path)
 }
 
-func (f *Fs) mergeDirEntries(entriesList [][]upstream.Entry) (fs.DirEntries, error) {
+func (f *Fs) searchEntries(operation string, entries ...upstream.Entry) (upstream.Entry, error) {
+	p, err := f.resolvePolicy(operation)
+	if err != nil {
+		return nil, err
+	}
+	return p.SearchEntries(entries...)
+}
+
+func (f *Fs) mergeDirEntries(operation string, entriesList [][]upstream.Entry) (fs.DirEntries, error) {
 	entryMap := make(map[string]([]upstream.Entry))
 	for _, en := range entriesList {
 		if en == nil {
@@ -785,7 +859,7 @@ func (f *Fs) mergeDirEntries(entriesList [][]upstream.Entry) (fs.DirEntries, err
 	}
 	var entries fs.DirEntries
 	for path := range entryMap {
-		e, err := f.wrapEntries(entryMap[path]...)
+		e, err := f.wrapEntries(operation, entryMap[path]...)
 		if err != nil {
 			return nil, err
 		}
@@ -881,6 +955,27 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		return nil, err
 	}
 	fs.Debugf(f, "actionPolicy = %T, createPolicy = %T, searchPolicy = %T", f.actionPolicy, f.createPolicy, f.searchPolicy)
+
+	f.overridePolicy = make(map[string]policy.Policy)
+	for _, u := range opt.PolicyOverride {
+		// function:category/policy
+		token := strings.Split(u, ":")
+		if len(token) != 2 {
+			continue
+		}
+		for _, k := range atomPolicies {
+			if k == token[0] {
+				return nil, errors.New("cannot override the whole policy; use the correspoding option")
+			}
+		}
+		resolved, err := f.resolvePolicy(token[1])
+		if err != nil {
+			return nil, err
+		}
+		f.overridePolicy[token[0]] = resolved
+		fs.Debugf(f, "override: %s = %T", token[0], resolved)
+	}
+
 	var features = (&fs.Features{
 		CaseInsensitive:         true,
 		DuplicateFiles:          false,
