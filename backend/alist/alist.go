@@ -244,7 +244,7 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) (err error) {
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
 	var bodyJson []byte
 	remoteDir := path.Join("/", f.root, dir)
-	fmt.Printf("%s %s\n", dir, remoteDir)
+	// fmt.Printf("%s %s\n", dir, remoteDir)
 	for page := 1; ; page++ {
 		bodyJson, err = json.Marshal(map[string]interface{}{
 			"page":     page,
@@ -260,6 +260,11 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 			Method: "POST",
 			Path:   "/api/fs/list",
 			Body:   bytes.NewReader(bodyJson),
+			ExtraHeaders: map[string]string{
+				"content-type": "application/json;charset=UTF-8",
+				"origin":       "https://files.nogizaka46.cc",
+				"referer":      "https://files.nogizaka46.cc/",
+			},
 		}
 
 		var temp ListResponse
@@ -282,7 +287,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 			if err != nil {
 				mtime = timeUnset
 			}
-			fmt.Printf("%s %d %d\n", item.Name, item.IsDir, item.Size)
+			// fmt.Printf("%s %d %d\n", item.Name, item.IsDir, item.Size)
 			rname := path.Join(dir, item.Name)
 			if item.IsDir {
 				entries = append(entries, fs.NewDir(rname, mtime))
