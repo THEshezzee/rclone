@@ -382,7 +382,7 @@ func (f *Fs) PublicLink(ctx context.Context, remote string, expire fs.Duration, 
 		return "", fs.ErrorCantShareDirectories
 	}
 	// example link: https://alist-instance.localhost/d/link/to/file.txt
-	remotePath := path.Join("/", "d", f.root, remote)
+	remotePath := path.Join("/d", f.root, remote)
 
 	ep, err := url.Parse(f.opt.Url)
 	if err != nil {
@@ -422,7 +422,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	var resp *http.Response
 	opts := rest.Opts{
 		Method:  "GET",
-		Path:    path.Join("/", o.remotePath),
+		Path:    path.Join("/d/", o.remotePath),
 		Options: optionsFixed,
 	}
 	resp, err = o.fs.srv.Call(ctx, &opts)
