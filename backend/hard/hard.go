@@ -492,12 +492,21 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (rc io.Read
 		}
 	}
 
-	return &hardReader{
+	hr := &hardReader{
 		o:       o.Object,
 		offset:  offset,
-		limit:   limit,
 		options: openOptions,
-	}, nil
+	}
+	var ret io.ReadCloser
+	if limit != -1 {
+		ret = struct {
+			io.Reader
+			io.Closer
+		}{Reader: io.LimitReader(hr, limit), Closer: hr}
+	} else {
+		ret = hr
+	}
+	return ret, nil
 }
 
 // ID returns the ID of the Object if known, or "" if not
@@ -534,25 +543,8 @@ type hardReader struct {
 	rc         io.ReadCloser
 	options    []fs.OpenOption
 	offset     int64
-	limit      int64
 	eofReached bool
 	closed     bool
-}
-
-func appendSeekOption(options []fs.OpenOption, offset, limit int64) []fs.OpenOption {
-	if limit == -1 {
-		if offset > 0 {
-			// start from offset, read until end
-			return append(options, &fs.SeekOption{Offset: offset})
-		}
-		// else: start from 0, read until end
-	} else {
-		if offset > 0 {
-			// start from offset, with limit
-			return append(options, &fs.RangeOption{Start: offset, End: limit})
-		}
-	}
-	return options
 }
 
 func (r *hardReader) Read(p []byte) (n int, err error) {
@@ -562,18 +554,13 @@ func (r *hardReader) Read(p []byte) (n int, err error) {
 	if r.eofReached {
 		return 0, io.EOF
 	}
-	if r.limit != -1 && r.limit <= r.offset {
-		r.eofReached = true
-		return 0, io.EOF
-	}
 	defer func() {
-		fs.Debugf(r.o, "result: %d %d %d %v", r.offset, r.limit, n, err)
+		fs.Debugf(r.o, "result: %d %d %v", r.offset, n, err)
 	}()
 	for {
 		if r.rc == nil {
-			newOpts := []fs.OpenOption{}
+			newOpts := []fs.OpenOption{&fs.SeekOption{Offset: r.offset}}
 			newOpts = append(newOpts, r.options...)
-			newOpts = appendSeekOption(newOpts, r.offset, r.limit)
 			r.rc, err = r.o.Open(context.Background(), newOpts...)
 			if err != nil {
 				fs.Errorf(r.o, "err on open: %v", err)
@@ -589,6 +576,7 @@ func (r *hardReader) Read(p []byte) (n int, err error) {
 		}
 		if err != nil {
 			fs.Errorf(r.o, "err on read: %v", err)
+			r.rc.Close()
 			r.rc = nil
 			if n > 0 {
 				r.offset += int64(n)
