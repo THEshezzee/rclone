@@ -128,33 +128,34 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 // found.
 // List entries and process them
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
-	return f.Fs.List(ctx, dir)
-}
-
-// ListR lists the objects and directories of the Fs starting
-// from dir recursively into out.
-//
-// dir should be "" to start from the root, and should not
-// have trailing slashes.
-//
-// This should return ErrDirNotFound if the directory isn't
-// found.
-//
-// It should call callback for each tranche of entries read.
-// These need not be returned in any particular order.  If
-// callback returns an error then the listing will stop
-// immediately.
-//
-// Don't implement this unless you have a more efficient way
-// of listing recursively that doing a directory traversal.
-func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
-	return f.Fs.Features().ListR(ctx, dir, callback)
+	ret, err := f.Fs.List(ctx, dir)
+	if err != nil {
+		return entries, err
+	}
+	for _, x := range ret {
+		if o, ok := x.(fs.Object); ok {
+			entries = append(entries, &Object{
+				Object: o,
+				f:      f,
+			})
+		} else {
+			entries = append(entries, x)
+		}
+	}
+	return entries, err
 }
 
 // NewObject finds the Object at remote.
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	// Read metadata from metadata object
-	return f.Fs.NewObject(ctx, remote)
+	o, err := f.Fs.NewObject(ctx, remote)
+	if err != nil {
+		return nil, err
+	}
+	return &Object{
+		Object: o,
+		f:      f,
+	}, nil
 }
 
 // Put in to the remote path with the modTime given of the given size
@@ -412,7 +413,7 @@ func (o *Object) String() string {
 	if o == nil {
 		return "<nil>"
 	}
-	return o.Remote()
+	return fmt.Sprintf("Hard: %s", o.Remote())
 }
 
 // Remote returns the remote path
@@ -496,7 +497,6 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (rc io.Read
 		offset:  offset,
 		limit:   limit,
 		options: openOptions,
-		ctx:     ctx,
 	}, nil
 }
 
@@ -526,18 +526,12 @@ func (f *Fs) Features() *fs.Features {
 
 // Return a string version
 func (f *Fs) String() string {
-	return fmt.Sprintf("Compressed: %s:%s", f.name, f.root)
-}
-
-// Precision returns the precision of this Fs
-func (f *Fs) Precision() time.Duration {
-	return f.Fs.Precision()
+	return fmt.Sprintf("Hard: %s:%s", f.name, f.root)
 }
 
 type hardReader struct {
 	o          fs.Object
 	rc         io.ReadCloser
-	ctx        context.Context
 	options    []fs.OpenOption
 	offset     int64
 	limit      int64
@@ -563,21 +557,24 @@ func appendSeekOption(options []fs.OpenOption, offset, limit int64) []fs.OpenOpt
 
 func (r *hardReader) Read(p []byte) (n int, err error) {
 	if r.closed {
-		return -1, chunkedreader.ErrorFileClosed
+		return 0, chunkedreader.ErrorFileClosed
 	}
 	if r.eofReached {
-		return -1, io.EOF
+		return 0, io.EOF
 	}
 	if r.limit != -1 && r.limit <= r.offset {
 		r.eofReached = true
-		return -1, io.EOF
+		return 0, io.EOF
 	}
+	defer func() {
+		fs.Debugf(r.o, "result: %d %d %d %v", r.offset, r.limit, n, err)
+	}()
 	for {
 		if r.rc == nil {
 			newOpts := []fs.OpenOption{}
 			newOpts = append(newOpts, r.options...)
 			newOpts = appendSeekOption(newOpts, r.offset, r.limit)
-			r.rc, err = r.o.Open(r.ctx, newOpts...)
+			r.rc, err = r.o.Open(context.Background(), newOpts...)
 			if err != nil {
 				fs.Errorf(r.o, "err on open: %v", err)
 				r.rc = nil
@@ -593,11 +590,10 @@ func (r *hardReader) Read(p []byte) (n int, err error) {
 		if err != nil {
 			fs.Errorf(r.o, "err on read: %v", err)
 			r.rc = nil
-			continue
-		}
-		if n < 0 {
-			fs.Errorf(r.o, "Read() on Object returned negative value without error: %d", n)
-			r.rc = nil
+			if n > 0 {
+				r.offset += int64(n)
+				return n, nil
+			}
 			continue
 		}
 		r.offset += int64(n)
@@ -608,7 +604,9 @@ func (r *hardReader) Close() (err error) {
 	if r.closed {
 		return chunkedreader.ErrorFileClosed
 	}
-	err = r.rc.Close()
+	if r.rc != nil {
+		err = r.rc.Close()
+	}
 	r.rc = nil
 	r.o = nil
 	r.closed = true
@@ -625,7 +623,6 @@ var (
 	_ fs.PutStreamer     = (*Fs)(nil)
 	_ fs.CleanUpper      = (*Fs)(nil)
 	_ fs.UnWrapper       = (*Fs)(nil)
-	_ fs.ListRer         = (*Fs)(nil)
 	_ fs.Abouter         = (*Fs)(nil)
 	_ fs.Wrapper         = (*Fs)(nil)
 	_ fs.MergeDirser     = (*Fs)(nil)
