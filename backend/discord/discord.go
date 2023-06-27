@@ -77,7 +77,7 @@ func init() {
 }
 
 const (
-	overallUploadLimit int64 = 8 * 1024 * 1024
+	overallUploadLimit int64 = 25 * 1024 * 1024
 	chunkSize          int64 = overallUploadLimit
 )
 
@@ -125,8 +125,6 @@ type JournalMetadata struct {
 	Size      int64    `json:"size"`
 	ModTime   string   `json:"modtime"`
 	Md5       string   `json:"md5"`
-	Sha1      string   `json:"sha1"`
-	Sha256    string   `json:"sha256"`
 	Urls      []string `json:"urls"`
 	ChunkSize int64    `json:"chunksize"`
 	// use this to massive-delete message without inferring others
@@ -241,12 +239,6 @@ func (o *Object) Fs() fs.Info {
 func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) {
 	if ty == hash.MD5 {
 		return o.meta.Md5, nil
-	}
-	if ty == hash.SHA1 {
-		return o.meta.Sha1, nil
-	}
-	if ty == hash.SHA256 {
-		return o.meta.Sha256, nil
 	}
 	return "", hash.ErrUnsupported
 }
@@ -593,8 +585,6 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		o.meta.Size = c.readCount
 	}
 
-	o.meta.Sha1, _ = mher.SumString(hash.SHA1, false)
-	o.meta.Sha256, _ = mher.SumString(hash.SHA256, false)
 	o.meta.Md5, _ = mher.SumString(hash.MD5, false)
 	// amend or create metadata with new journal
 	err = o.amendMetadata(*o.meta, true)
